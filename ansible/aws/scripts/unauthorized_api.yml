@@ -1,0 +1,124 @@
+- name: Create metric filter and alarm for unauthorized API calls 
+  hosts: localhost
+  no_log: true
+  gather_facts: true
+  become: true	
+  pre_tasks:
+  - assert:
+      that:
+        - aws_account_id is defined
+        - aws_access_key is defined
+        - aws_secret_key is defined
+        - aws_region is defined
+  vars:
+    filter_name: "unauthorized_api_filter_{{aws_account_id}}"
+    filter_pattern: '{ ($.errorCode = "*UnauthorizedOperation") || ($.errorCode = "AccessDenied*") }'
+    log_group_name: "management_event_log_group_{{aws_account_id}}"
+    metric_name: "unauthorized_api_metric_{{aws_account_id}}"
+    metric_namespace: "UnauthorizedFailures"
+    unauthorized_api_metric_filter_alarm_exists: True
+    alarm_name: "unauthorized_api_metric_filter_alarm_{{aws_account_id}}"
+    alarm_description: "This alarm is triggered when unauthorized API calls made."
+    policy_name: "management_event_trail_lg_policy_{{aws_account_id}}"
+    role_name: "management_event_trail_lg_role_{{aws_account_id}}"
+    policy_document_file: "./policy_document.json"
+    assume_policy_document_file : "./assume_policy_document.json"
+    bucket_policy_file: "./bucket_policy.json"
+    s3_bucket_name: "management-event-trail-bucket-{{aws_account_id}}"
+    trail_name: "management_event_trail_{{aws_account_id}}"
+  tasks:
+    - block: # prepare files for roles and permissions
+      - name: Cloud trail log group role
+        template:
+          src: ./policy_document.j2
+          dest: "{{policy_document_file}}"
+      - name: s3 bucket permission for trail to push logs
+        template:
+          src: ./bucket_policy.j2
+          dest: "{{bucket_policy_file}}"
+    - block: # Create policy, role and instance profile
+      - name: Create log group
+        community.aws.cloudwatchlogs_log_group:
+          aws_access_key: "{{aws_access_key}}"
+          aws_secret_key: "{{aws_secret_key}}"
+          region: "{{aws_region}}"
+          log_group_name: "{{log_group_name}}"
+          state: present
+        register: log_group_resp
+      - name: Create log metric filter
+        community.aws.cloudwatchlogs_log_group_metric_filter:
+          aws_access_key: "{{aws_access_key}}"
+          aws_secret_key: "{{aws_secret_key}}"
+          filter_name: "{{filter_name}}"
+          filter_pattern: "{{filter_pattern}}"
+          log_group_name: "{{ log_group_name }}"
+          region: "{{aws_region}}"
+          metric_transformation:
+            metric_name: "{{metric_name}}"
+            metric_namespace: "{{metric_namespace}}"
+            metric_value: "1"
+          state: present
+        register: metric_filter_resp
+      - name: create alarm
+        community.aws.ec2_metric_alarm:
+          state: present
+          aws_access_key: "{{aws_access_key}}"
+          aws_secret_key: "{{aws_secret_key}}"
+          region: "{{aws_region}}"
+          name: "{{alarm_name}}"
+          metric: "{{metric_name}}"
+          namespace: "{{metric_namespace}}"
+          statistic: Sum
+          comparison: "GreaterThanOrEqualToThreshold"
+          threshold: "1"
+          period: "300"
+          evaluation_periods: "1"
+          description: "{{alarm_description}}"
+      when: unauthorized_api_metric_filter_alarm_exists is defined and unauthorized_api_metric_filter_alarm_exists == "False"
+    - block:
+      - name: Create cloud trail log group role
+        community.aws.iam_managed_policy:
+          aws_access_key: "{{aws_access_key}}"
+          aws_secret_key: "{{aws_secret_key}}"
+          policy_name: "{{policy_name}}"
+          policy_description: "To cloudtrail trail to push logs to cloudwatch"
+          policy: "{{ lookup('file', policy_document_file) }}"
+          state: present
+        register: policy_resp
+      - name: Create role
+        community.aws.iam_role:
+          aws_access_key: "{{aws_access_key}}"
+          aws_secret_key: "{{aws_secret_key}}"
+          name: "{{role_name}}"
+          assume_role_policy_document: "{{lookup('file',assume_policy_document_file)}}"
+          managed_policies:
+            - "{{policy_resp.policy.arn}}"
+          state: present
+        register: role_resp
+      - name: Create s3 bucket for log trail
+        amazon.aws.s3_bucket:
+          aws_access_key: "{{aws_access_key}}"
+          aws_secret_key: "{{aws_secret_key}}"
+          name: "{{s3_bucket_name}}"
+          policy: "{{ lookup('file',bucket_policy_file) }}"
+          state: present
+      - name: Pause to wait for log group to create
+        pause:
+          seconds: 5
+      - name: Create trail
+        community.aws.cloudtrail:
+          aws_access_key: "{{aws_access_key}}"
+          aws_secret_key: "{{aws_secret_key}}"
+          region: "{{aws_region}}"
+          name: "{{trail_name}}"
+          is_multi_region_trail: yes
+          cloudwatch_logs_log_group_arn : "{{log_group_resp.arn}}"
+          cloudwatch_logs_role_arn: "{{role_resp.arn}}"
+          s3_bucket_name: "{{s3_bucket_name}}"
+          state: present
+      when: unauthorized_api_metric_filter_alarm_exists is defined and unauthorized_api_metric_filter_alarm_exists == "False"
+    - debug:
+        msg: "{{role_resp.arn}}"
+      when: unauthorized_api_metric_filter_alarm_exists is defined and unauthorized_api_metric_filter_alarm_exists == "False"
+    - debug:
+        msg: "{{unauthorized_api_metric_filter_alarm_exists}}"
