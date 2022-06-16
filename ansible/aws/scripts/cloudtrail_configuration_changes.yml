@@ -1,8 +1,7 @@
 - name: Create metric filter and alarm for CloudTrail configuration changes should be configured
   hosts: localhost
-  no_log: true
   gather_facts: true
-  become: true	
+  become: false	
   pre_tasks:
   - assert:
       that:
@@ -38,6 +37,7 @@
           dest: "{{bucket_policy_file}}"
     - block: # Create policy, role and instance profile
       - name: Create log group
+        no_log: true
         community.aws.cloudwatchlogs_log_group:
           aws_access_key: "{{aws_access_key}}"
           aws_secret_key: "{{aws_secret_key}}"
@@ -46,6 +46,7 @@
           state: present
         register: log_group_resp
       - name: Create log metric filter
+        no_log: true
         community.aws.cloudwatchlogs_log_group_metric_filter:
           aws_access_key: "{{aws_access_key}}"
           aws_secret_key: "{{aws_secret_key}}"
@@ -60,6 +61,7 @@
           state: present
         register: metric_filter_resp
       - name: create alarm
+        no_log: true
         community.aws.ec2_metric_alarm:
           state: present
           aws_access_key: "{{aws_access_key}}"
@@ -77,6 +79,7 @@
       when: cloudtrail_configuration_changes_metric_filter_alarm_exists is defined and cloudtrail_configuration_changes_metric_filter_alarm_exists == "False"
     - block:
       - name: Create cloud trail log group role
+        no_log: true
         community.aws.iam_managed_policy:
           aws_access_key: "{{aws_access_key}}"
           aws_secret_key: "{{aws_secret_key}}"
@@ -86,6 +89,7 @@
           state: present
         register: policy_resp
       - name: Create role
+        no_log: true
         community.aws.iam_role:
           aws_access_key: "{{aws_access_key}}"
           aws_secret_key: "{{aws_secret_key}}"
@@ -96,6 +100,7 @@
           state: present
         register: role_resp
       - name: Create s3 bucket for log trail
+        no_log: true
         amazon.aws.s3_bucket:
           aws_access_key: "{{aws_access_key}}"
           aws_secret_key: "{{aws_secret_key}}"
@@ -106,6 +111,7 @@
         pause:
           seconds: 5
       - name: Create trail
+        no_log: true
         community.aws.cloudtrail:
           aws_access_key: "{{aws_access_key}}"
           aws_secret_key: "{{aws_secret_key}}"
